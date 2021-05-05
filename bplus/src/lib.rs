@@ -141,31 +141,7 @@ impl InternalNode {
                 }
             }
         }
-        //  else {
-        //     self.data.push(Pair::new(
-        //         data.key,
-        //         Node::Leaf(LeafNode {
-        //             cap: self.cap,
-        //             data: Vec::new(),
-        //             next: None,
-        //         }),
-        //     ));
-        //     let p = self.data.first_mut().unwrap();
-        //     let splited = p.value.borrow_mut().insert(data)?;
-        //     if let Some(n) = splited {
-        //         if let Some(k) = n.borrow().min_key() {
-        //             self.data.push(Pair {
-        //                 key: k,
-        //                 value: n.clone(),
-        //             })
-        //         }
-        //     }
-        // }
-        // TODO key の探し方おかしい
-
         if self.is_full() {
-            // split
-
             return self.split();
         }
         return Ok(None);
