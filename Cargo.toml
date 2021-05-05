@@ -10,3 +10,5 @@ edition = "2018"
 members = ["bplus"]
 
 [dependencies]
+
+bplus={version="0.1.0", path="bplus"}

@@ -1,12 +1,9 @@
 use std::{
     cell::RefCell,
-    ops::Deref,
     rc::{Rc, Weak},
 };
 
-use anyhow::Result;
-
-type RefNode = Rc<RefCell<Node>>;
+pub type RefNode = Rc<RefCell<Node>>;
 #[derive(Debug)]
 struct Pair {
     key: usize,
@@ -23,23 +20,23 @@ impl Pair {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct Record {
+pub struct Record {
     key: usize,
     value: usize,
 }
 #[derive(Debug)]
-enum Node {
+pub enum Node {
     Root(RootNode),
     Internal(InternalNode),
     Leaf(LeafNode),
 }
 impl Node {
-    fn new(cap: usize) -> Self {
+    pub fn new(cap: usize) -> Self {
         Node::Root(RootNode { cap, data: None })
     }
 
     #[must_use = "insertion may fail"]
-    fn insert(&mut self, data: Record) -> Result<Option<RefNode>> {
+    pub fn insert(&mut self, data: Record) -> Option<RefNode> {
         match self {
             Node::Root(root) => root.insert(data),
             Node::Internal(internal) => internal.insert(data),
@@ -47,14 +44,6 @@ impl Node {
         }
     }
 
-    // capacityに空きがあるかどうか
-    fn is_full(&self) -> bool {
-        match self {
-            Node::Root(root) => root.is_full(),
-            Node::Internal(internal) => internal.is_full(),
-            Node::Leaf(leaf) => leaf.is_full(),
-        }
-    }
     fn min_key(&self) -> Option<usize> {
         match self {
             Node::Root(root) => root.data.as_ref().and_then(|n| n.min_key()),
@@ -65,19 +54,19 @@ impl Node {
 }
 
 #[derive(Debug)]
-struct RootNode {
+pub struct RootNode {
     cap: usize,
     data: Option<Box<Node>>,
 }
 impl RootNode {
-    fn insert(&mut self, data: Record) -> Result<Option<RefNode>> {
+    fn insert(&mut self, data: Record) -> Option<RefNode> {
         // 末尾に常に入れるわけではない
         if self.data.is_none() {
             self.data = Some(Box::new(Node::Leaf(LeafNode::new(self.cap, data))));
-            return Ok(None);
+            return None;
         }
         let n = self.data.as_deref_mut().unwrap();
-        let inserted = n.insert(data)?;
+        let inserted = n.insert(data);
         if let Some(inserted) = inserted {
             // 子はfullになって分割したので、自身の保持しているnodeには追加済みなので、
             let n = self.data.take().unwrap();
@@ -97,20 +86,16 @@ impl RootNode {
             };
             self.data = Some(Box::new(Node::Internal(new_child)));
         }
-        Ok(None)
-    }
-    // capacityに空きがあるかどうか
-    fn is_full(&self) -> bool {
-        self.data.is_some()
+        None
     }
 }
 #[derive(Debug)]
-struct InternalNode {
+pub struct InternalNode {
     cap: usize,
     data: Vec<Pair>,
 }
 impl InternalNode {
-    fn insert(&mut self, data: Record) -> Result<Option<RefNode>> {
+    fn insert(&mut self, data: Record) -> Option<RefNode> {
         if self.data.is_empty() {
             self.data.push(Pair::new(
                 data.key,
@@ -121,7 +106,7 @@ impl InternalNode {
                 }),
             ))
         }
-        let splited = self.find_node(&data).value.borrow_mut().insert(data)?;
+        let splited = self.find_node(&data).value.borrow_mut().insert(data);
         if let Some(n) = splited {
             if let Some(k) = n.borrow().min_key() {
                 self.data.push(Pair {
@@ -132,18 +117,18 @@ impl InternalNode {
             }
         }
         if self.is_full() {
-            return self.split();
+            return Some(self.split());
         }
-        Ok(None)
+        None
     }
 
-    fn split(&mut self) -> Result<Option<RefNode>> {
+    fn split(&mut self) -> RefNode {
         let right = self.data.split_off(self.data.len() / 2);
         let new_next = Self {
             cap: self.cap,
             data: right,
         };
-        Ok(Some(Rc::new(RefCell::new(Node::Internal(new_next)))))
+        Rc::new(RefCell::new(Node::Internal(new_next)))
     }
 
     fn find_node<'a>(&'a mut self, data: &Record) -> &'a Pair {
@@ -177,7 +162,7 @@ impl InternalNode {
     }
 }
 #[derive(Debug)]
-struct LeafNode {
+pub struct LeafNode {
     cap: usize,
     data: Vec<Record>,
     next: Option<Weak<RefCell<Node>>>,
@@ -191,17 +176,17 @@ impl LeafNode {
             next: None,
         }
     }
-    fn insert(&mut self, data: Record) -> Result<Option<RefNode>> {
+    fn insert(&mut self, data: Record) -> Option<RefNode> {
         // 末尾に常に入れるわけではない
         self.data.push(data);
         self.data.sort_by_key(|r| r.key);
         if self.is_full() {
-            return self.split();
+            return Some(self.split());
         }
-        Ok(None)
+        None
     }
 
-    fn split(&mut self) -> Result<Option<RefNode>> {
+    fn split(&mut self) -> RefNode {
         let right = self.data.split_off(self.data.len() / 2);
         let next = self.next.take();
         let new_next = Self {
@@ -211,7 +196,7 @@ impl LeafNode {
         };
         let ref_node = Rc::new(RefCell::new(Node::Leaf(new_next)));
         self.next = Some(Rc::downgrade(&ref_node));
-        Ok(Some(ref_node))
+        ref_node
     }
     // capacityに空きがあるかどうか
     fn is_full(&self) -> bool {
@@ -261,7 +246,7 @@ mod test {
                 let root = extract_root(&n).unwrap();
                 assert!(root.data.is_none());
             }
-            let _ = n.insert(Record { key: 9, value: 11 }).unwrap();
+            let _ = n.insert(Record { key: 9, value: 11 });
             {
                 let root = extract_root(&n).unwrap();
                 assert!(root.data.is_some());
@@ -269,21 +254,21 @@ mod test {
                 assert_eq!(leaf.data.len(), 1);
                 assert_eq!(leaf.data.first().unwrap(), &Record { key: 9, value: 11 });
             }
-            let _ = n.insert(Record { key: 8, value: 11 }).unwrap();
-            let _ = n.insert(Record { key: 7, value: 11 }).unwrap();
+            let _ = n.insert(Record { key: 8, value: 11 });
+            let _ = n.insert(Record { key: 7, value: 11 });
             {
                 let root = extract_root(&n).unwrap();
                 assert!(root.data.is_some());
                 let leaf = extract_leaf(root.data.as_deref().unwrap()).unwrap();
                 assert_eq!(leaf.data.len(), 3);
             }
-            let _ = n.insert(Record { key: 10, value: 11 }).unwrap();
+            let _ = n.insert(Record { key: 10, value: 11 });
             {
                 let root = extract_root(&n).unwrap();
                 let leaf = extract_internal(root.data.as_deref().unwrap()).unwrap();
                 assert_eq!(leaf.data.len(), 2);
             }
-            let _ = n.insert(Record { key: 11, value: 11 }).unwrap();
+            let _ = n.insert(Record { key: 11, value: 11 });
 
             let root = extract_root(&n).unwrap();
             let internal = extract_internal(root.data.as_deref().unwrap()).unwrap();
@@ -329,11 +314,11 @@ mod test {
         }
         {
             let mut n = Node::new(2);
-            let _ = n.insert(Record { key: 9, value: 11 }).unwrap();
-            let _ = n.insert(Record { key: 8, value: 11 }).unwrap();
-            let _ = n.insert(Record { key: 7, value: 11 }).unwrap();
-            let _ = n.insert(Record { key: 10, value: 11 }).unwrap();
-            let _ = n.insert(Record { key: 11, value: 11 }).unwrap();
+            let _ = n.insert(Record { key: 9, value: 11 });
+            let _ = n.insert(Record { key: 8, value: 11 });
+            let _ = n.insert(Record { key: 7, value: 11 });
+            let _ = n.insert(Record { key: 10, value: 11 });
+            let _ = n.insert(Record { key: 11, value: 11 });
 
             let root = extract_root(&n).unwrap();
             let internal = extract_internal(root.data.as_deref().unwrap()).unwrap();
