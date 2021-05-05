@@ -121,30 +121,20 @@ impl InternalNode {
                 }),
             ))
         }
-        let mut x = self
-            .data
-            .iter_mut()
-            .take_while(|pair| pair.key < data.key)
-            .last();
-        if x.is_none() {
-            x = self.data.first_mut();
-        }
-        if let Some(p) = x {
-            let splited = p.value.borrow_mut().insert(data)?;
-            if let Some(n) = splited {
-                if let Some(k) = n.borrow().min_key() {
-                    self.data.push(Pair {
-                        key: k,
-                        value: n.clone(),
-                    });
-                    self.data.sort_by_key(|p| p.key);
-                }
+        let splited = self.find_node(&data).value.borrow_mut().insert(data)?;
+        if let Some(n) = splited {
+            if let Some(k) = n.borrow().min_key() {
+                self.data.push(Pair {
+                    key: k,
+                    value: n.clone(),
+                });
+                self.data.sort_by_key(|p| p.key);
             }
         }
         if self.is_full() {
             return self.split();
         }
-        return Ok(None);
+        Ok(None)
     }
 
     fn split(&mut self) -> Result<Option<RefNode>> {
@@ -156,27 +146,28 @@ impl InternalNode {
         Ok(Some(Rc::new(RefCell::new(Node::Internal(new_next)))))
     }
 
-    // fn find_node(&mut self, data: Record) -> &mut Pair {
-    //     if self.data.is_empty() {
-    //         self.data.push(Pair::new(
-    //             data.key,
-    //             Node::Leaf(LeafNode {
-    //                 cap: self.cap,
-    //                 data: Vec::new(),
-    //                 next: None,
-    //             }),
-    //         ))
-    //     }
-    //     let mut x = self
-    //         .data
-    //         .iter_mut()
-    //         .take_while(|pair| pair.key < data.key)
-    //         .last();
-    //     if x.is_none() {
-    //         return self.data.first_mut().unwrap();
-    //     }
-    //     x.unwrap()
-    // }
+    fn find_node<'a>(&'a mut self, data: &Record) -> &'a Pair {
+        if self.data.is_empty() {
+            self.data.push(Pair::new(
+                data.key,
+                Node::Leaf(LeafNode {
+                    cap: self.cap,
+                    data: Vec::new(),
+                    next: None,
+                }),
+            ))
+        }
+        let x = self
+            .data
+            .iter()
+            .take_while(|pair| pair.key < data.key)
+            .last();
+        if let Some(x) = x {
+            x
+        } else {
+            self.data.first().unwrap()
+        }
+    }
 
     // capacityに空きがあるかどうか
     fn is_full(&self) -> bool {
