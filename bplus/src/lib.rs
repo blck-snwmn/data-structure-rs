@@ -201,9 +201,12 @@ impl InternalNode {
     //     }
     //     x.unwrap()
     // }
+
     // capacityに空きがあるかどうか
     fn is_full(&self) -> bool {
-        self.data.len() > self.cap
+        // 暗黙的に最小値のキー分保持している
+        // その分がcapを圧迫しちゃうので、そのサイズ分無視するために１加算
+        self.data.len() > (self.cap + 1)
     }
 }
 #[derive(Debug)]
@@ -285,75 +288,153 @@ mod test {
 
     #[test]
     fn insert() {
-        let mut n = Node::new(3);
         {
-            let root = extract_root(&n).unwrap();
-            assert!(root.data.is_none());
-        }
-        let _ = n.insert(Record { key: 9, value: 11 }).unwrap();
-        {
-            let root = extract_root(&n).unwrap();
-            assert!(root.data.is_some());
-            let leaf = extract_leaf(root.data.as_deref().unwrap()).unwrap();
-            assert_eq!(leaf.data.len(), 1);
-            assert_eq!(leaf.data.first().unwrap(), &Record { key: 9, value: 11 });
-        }
-        let _ = n.insert(Record { key: 8, value: 11 }).unwrap();
-        let _ = n.insert(Record { key: 7, value: 11 }).unwrap();
-        {
-            let root = extract_root(&n).unwrap();
-            assert!(root.data.is_some());
-            let leaf = extract_leaf(root.data.as_deref().unwrap()).unwrap();
-            assert_eq!(leaf.data.len(), 3);
-        }
-        let _ = n.insert(Record { key: 10, value: 11 }).unwrap();
-        {
-            let root = extract_root(&n).unwrap();
-            let leaf = extract_internal(root.data.as_deref().unwrap()).unwrap();
-            assert_eq!(leaf.data.len(), 2);
-        }
-        let _ = n.insert(Record { key: 11, value: 11 }).unwrap();
+            let mut n = Node::new(3);
+            {
+                let root = extract_root(&n).unwrap();
+                assert!(root.data.is_none());
+            }
+            let _ = n.insert(Record { key: 9, value: 11 }).unwrap();
+            {
+                let root = extract_root(&n).unwrap();
+                assert!(root.data.is_some());
+                let leaf = extract_leaf(root.data.as_deref().unwrap()).unwrap();
+                assert_eq!(leaf.data.len(), 1);
+                assert_eq!(leaf.data.first().unwrap(), &Record { key: 9, value: 11 });
+            }
+            let _ = n.insert(Record { key: 8, value: 11 }).unwrap();
+            let _ = n.insert(Record { key: 7, value: 11 }).unwrap();
+            {
+                let root = extract_root(&n).unwrap();
+                assert!(root.data.is_some());
+                let leaf = extract_leaf(root.data.as_deref().unwrap()).unwrap();
+                assert_eq!(leaf.data.len(), 3);
+            }
+            let _ = n.insert(Record { key: 10, value: 11 }).unwrap();
+            {
+                let root = extract_root(&n).unwrap();
+                let leaf = extract_internal(root.data.as_deref().unwrap()).unwrap();
+                assert_eq!(leaf.data.len(), 2);
+            }
+            let _ = n.insert(Record { key: 11, value: 11 }).unwrap();
 
-        let root = extract_root(&n).unwrap();
-        let leaf = extract_internal(root.data.as_deref().unwrap()).unwrap();
-        assert_eq!(leaf.data.len(), 2);
-        {
-            let x = leaf.data.get(0).unwrap();
-            let x = x.value.as_ref().borrow();
-            let leaf = extract_leaf(&x).unwrap();
-            assert_eq!(
-                leaf.data,
-                vec![Record { key: 7, value: 11 }, Record { key: 8, value: 11 },]
-            );
-            let next = leaf.next.as_ref();
-            assert!(next.is_some());
-            let x = next.unwrap().upgrade().unwrap();
-            let x = x.borrow();
+            let root = extract_root(&n).unwrap();
+            let internal = extract_internal(root.data.as_deref().unwrap()).unwrap();
+            assert_eq!(internal.data.len(), 2);
+            {
+                let x = internal.data.get(0).unwrap();
+                let x = x.value.as_ref().borrow();
+                let leaf = extract_leaf(&x).unwrap();
+                assert_eq!(
+                    leaf.data,
+                    vec![Record { key: 7, value: 11 }, Record { key: 8, value: 11 },]
+                );
+                let next = leaf.next.as_ref();
+                assert!(next.is_some());
+                let x = next.unwrap().upgrade().unwrap();
+                let x = x.borrow();
 
-            let leaf = extract_leaf(&x).unwrap();
-            // 分割後に追加された値が入っている
-            assert_eq!(
-                leaf.data,
-                vec![
-                    Record { key: 9, value: 11 },
-                    Record { key: 10, value: 11 },
-                    Record { key: 11, value: 11 }
-                ]
-            );
+                let leaf = extract_leaf(&x).unwrap();
+                // 分割後に追加された値が入っている
+                assert_eq!(
+                    leaf.data,
+                    vec![
+                        Record { key: 9, value: 11 },
+                        Record { key: 10, value: 11 },
+                        Record { key: 11, value: 11 }
+                    ]
+                );
+            }
+            {
+                let x = internal.data.get(1).unwrap();
+                assert_eq!(x.key, 9);
+                let x = x.value.as_ref().borrow();
+                let leaf = extract_leaf(&x).unwrap();
+                assert_eq!(
+                    leaf.data,
+                    vec![
+                        Record { key: 9, value: 11 },
+                        Record { key: 10, value: 11 },
+                        Record { key: 11, value: 11 }
+                    ]
+                );
+            }
         }
         {
-            let x = leaf.data.get(1).unwrap();
-            assert_eq!(x.key, 9);
-            let x = x.value.as_ref().borrow();
-            let leaf = extract_leaf(&x).unwrap();
-            assert_eq!(
-                leaf.data,
-                vec![
-                    Record { key: 9, value: 11 },
-                    Record { key: 10, value: 11 },
-                    Record { key: 11, value: 11 }
-                ]
-            );
+            let mut n = Node::new(2);
+            let _ = n.insert(Record { key: 9, value: 11 }).unwrap();
+            let _ = n.insert(Record { key: 8, value: 11 }).unwrap();
+            let _ = n.insert(Record { key: 7, value: 11 }).unwrap();
+            let _ = n.insert(Record { key: 10, value: 11 }).unwrap();
+            let _ = n.insert(Record { key: 11, value: 11 }).unwrap();
+
+            let root = extract_root(&n).unwrap();
+            let internal = extract_internal(root.data.as_deref().unwrap()).unwrap();
+            assert_eq!(internal.data.len(), 2);
+            {
+                let p = internal.data.get(0).unwrap();
+                let x = p.value.as_ref().borrow();
+                let internal = extract_internal(&x).unwrap();
+                {
+                    let p = internal.data.get(0).unwrap();
+                    let x = p.value.as_ref().borrow();
+                    let leaf = extract_leaf(&x).unwrap();
+                    assert_eq!(leaf.data, vec![Record { key: 7, value: 11 }]);
+
+                    let next = leaf.next.as_ref();
+                    let x = next.unwrap().upgrade().unwrap();
+                    let x = x.borrow();
+                    let next_leaf = extract_leaf(&x).unwrap();
+                    // 分割後に追加された値が入っている
+                    assert_eq!(next_leaf.data, vec![Record { key: 8, value: 11 }]);
+                }
+                {
+                    let p = internal.data.get(1).unwrap();
+                    let x = p.value.as_ref().borrow();
+                    let leaf = extract_leaf(&x).unwrap();
+                    assert_eq!(leaf.data, vec![Record { key: 8, value: 11 }]);
+
+                    let next = leaf.next.as_ref();
+                    let x = next.unwrap().upgrade().unwrap();
+                    let x = x.borrow();
+                    let next_leaf = extract_leaf(&x).unwrap();
+                    // 分割後に追加された値が入っている
+                    assert_eq!(next_leaf.data, vec![Record { key: 9, value: 11 }]);
+                }
+            }
+            {
+                let p = internal.data.get(1).unwrap();
+                let x = p.value.as_ref().borrow();
+                let internal = extract_internal(&x).unwrap();
+                {
+                    let p = internal.data.get(0).unwrap();
+                    let x = p.value.as_ref().borrow();
+                    let leaf = extract_leaf(&x).unwrap();
+                    assert_eq!(leaf.data, vec![Record { key: 9, value: 11 }]);
+
+                    let next = leaf.next.as_ref();
+                    let x = next.unwrap().upgrade().unwrap();
+                    let x = x.borrow();
+                    let next_leaf = extract_leaf(&x).unwrap();
+                    // 分割後に追加された値が入っている
+                    assert_eq!(
+                        next_leaf.data,
+                        vec![Record { key: 10, value: 11 }, Record { key: 11, value: 11 }]
+                    );
+                }
+                {
+                    let p = internal.data.get(1).unwrap();
+                    let x = p.value.as_ref().borrow();
+                    let leaf = extract_leaf(&x).unwrap();
+                    assert_eq!(
+                        leaf.data,
+                        vec![Record { key: 10, value: 11 }, Record { key: 11, value: 11 }]
+                    );
+
+                    let next = leaf.next.as_ref();
+                    assert!(next.is_none());
+                }
+            }
         }
         // assert_eq!(leaf.data.first().unwrap(), &Record { key: 9, value: 11 });
         // println!("{:?}", n)
