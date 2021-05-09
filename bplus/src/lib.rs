@@ -182,11 +182,11 @@ impl InternalNode {
     }
 
     fn find_mut_node(&mut self, key: Key) -> Option<&mut NodePair> {
-        let exist = self.nodes.iter().any(|pair| pair.key < key);
+        let exist = self.nodes.iter().any(|pair| pair.key <= key);
         if exist {
             self.nodes
                 .iter_mut()
-                .take_while(|pair| pair.key < key)
+                .take_while(|pair| pair.key <= key)
                 .last()
         } else {
             self.nodes.first_mut()
@@ -202,7 +202,7 @@ impl InternalNode {
     fn find_node(&self, key: Key) -> Option<&NodePair> {
         self.nodes
             .iter()
-            .take_while(|pair| pair.key < key)
+            .take_while(|pair| pair.key <= key)
             .last()
             .or_else(|| self.nodes.first())
     }
@@ -258,24 +258,47 @@ mod test {
 
     #[test]
     fn insert() {
-        // {
-        //     let mut b = BPlusTree::<i64>::new(3);
-        //     b.insert(1, Data::new(0, -1));
-        //     let r = b.search(1);
-        //     assert!(r.is_some());
-        //     assert_eq!(*r.unwrap(), -1)
-        // }
         {
             let mut b = BPlusTree::<i64>::new(3);
             b.insert(1, Data::new(0, -1));
-            b.insert(5, Data::new(0, -5));
-            b.insert(2, Data::new(0, -2));
-            b.insert(4, Data::new(0, -4));
-            b.insert(3, Data::new(0, -3));
-            // dbg!(b);
-            let r = b.search(5);
+            let r = b.search(1);
             assert!(r.is_some());
-            assert_eq!(*r.unwrap(), -5)
+            assert_eq!(*r.unwrap(), -1)
+        }
+        {
+            let mut b = BPlusTree::<i64>::new(3);
+            b.insert(11, Data::new(0, -11));
+            b.insert(25, Data::new(0, -25));
+            b.insert(12, Data::new(0, -12));
+            b.insert(24, Data::new(0, -24));
+            b.insert(13, Data::new(0, -13));
+            b.insert(10, Data::new(0, -10));
+            b.insert(14, Data::new(0, -14));
+            // dbg!(b);
+            {
+                let r = b.search(24);
+                assert!(r.is_some());
+                assert_eq!(*r.unwrap(), -24)
+            }
+            {
+                let r = b.search(10);
+                assert!(r.is_some());
+                assert_eq!(*r.unwrap(), -10)
+            }
+            {
+                let r = b.search(11);
+                assert!(r.is_some());
+                assert_eq!(*r.unwrap(), -11)
+            }
+            {
+                let r = b.search(12);
+                assert!(r.is_some());
+                assert_eq!(*r.unwrap(), -12)
+            }
+            {
+                let r = b.search(19);
+                assert!(r.is_none());
+            }
         }
     }
 }
