@@ -1,119 +1,156 @@
-use std::{
-    cell::RefCell,
-    rc::{Rc, Weak},
-};
+use std::fmt::Display;
 
-pub type RefNode = Rc<RefCell<Node>>;
 #[derive(Debug)]
-struct Pair {
-    key: usize,
-    value: RefNode,
+pub struct Data<T>
+where
+    T: Display,
+{
+    id: usize,
+    data: T,
+    #[allow(dead_code)]
+    next_id: Option<usize>,
 }
 
-impl Pair {
-    fn new(key: usize, node: Node) -> Self {
-        Pair {
-            key,
-            value: Rc::new(RefCell::new(node)),
+impl<T: Display> Data<T> {
+    pub fn new(id: usize, data: T) -> Self {
+        Self {
+            id,
+            data,
+            next_id: None,
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Record {
-    key: usize,
-    value: usize,
-}
 #[derive(Debug)]
-pub enum Node {
-    Root(RootNode),
+pub struct BPlusTree<T>
+where
+    T: Display,
+{
+    cap: usize,
+    node: Option<Node>,
+    data: Vec<Data<T>>,
+}
+
+impl<T: Display> BPlusTree<T> {
+    pub fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            node: None,
+            data: Vec::new(),
+        }
+    }
+
+    pub fn insert(&mut self, key: Key, mut data: Data<T>) {
+        // data.id は self.dataのindexが入る
+        // この値は現在の長さに等しい
+        let data_id = self.data.len();
+        data.id = data_id;
+        self.data.push(data);
+
+        if self.node.is_none() {
+            let child = Node::Leaf(LeafNode {
+                cap: self.cap,
+                data_ids: vec![DataPair::new(key, data_id)],
+            });
+            self.node = Some(child);
+            return;
+        }
+
+        let splited = self.node.as_mut().and_then(|n| n.insert(key, data_id));
+        if let Some(node) = splited {
+            let old_child = self.node.take().unwrap();
+            let new_child = InternalNode {
+                cap: self.cap,
+                nodes: vec![
+                    NodePair::new(old_child.min_key().unwrap(), old_child),
+                    NodePair::new(node.min_key().unwrap(), node),
+                ],
+            };
+            self.node = Some(Node::Internal(new_child));
+        }
+    }
+
+    pub fn search(&self, key: Key) -> Option<&T> {
+        self.node
+            .as_ref()
+            .and_then(|n| n.search(key))
+            .and_then(|data_id| self.data.get(data_id))
+            .map(|d| &d.data)
+    }
+}
+
+pub type Key = usize;
+#[derive(Debug)]
+struct Pair<T> {
+    key: Key,
+    value: T,
+}
+
+impl<T> Pair<T> {
+    fn new(key: Key, value: T) -> Self {
+        Self { key, value }
+    }
+}
+
+type NodePair = Pair<Node>;
+type DataPair = Pair<usize>;
+
+#[derive(Debug)]
+enum Node {
     Internal(InternalNode),
     Leaf(LeafNode),
 }
+
 impl Node {
-    pub fn new(cap: usize) -> Self {
-        Node::Root(RootNode { cap, data: None })
+    #[must_use = "insertion may fail"]
+    pub fn insert(&mut self, key: Key, data_id: usize) -> Option<Node> {
+        match self {
+            Node::Internal(internal) => internal.insert(key, data_id),
+            Node::Leaf(leaf) => leaf.insert(key, data_id),
+        }
     }
 
-    #[must_use = "insertion may fail"]
-    pub fn insert(&mut self, data: Record) -> Option<RefNode> {
+    pub fn search(&self, key: Key) -> Option<usize> {
         match self {
-            Node::Root(root) => root.insert(data),
-            Node::Internal(internal) => internal.insert(data),
-            Node::Leaf(leaf) => leaf.insert(data),
+            Node::Internal(internal) => internal.search(key),
+            Node::Leaf(leaf) => leaf.search(key),
         }
     }
 
     fn min_key(&self) -> Option<usize> {
         match self {
-            Node::Root(root) => root.data.as_ref().and_then(|n| n.min_key()),
-            Node::Internal(internal) => internal.data.first().map(|p| p.key),
-            Node::Leaf(leaf) => leaf.data.first().map(|r| r.key),
+            Node::Internal(internal) => internal.nodes.first().map(|p| p.key),
+            Node::Leaf(leaf) => leaf.data_ids.first().map(|r| r.key),
         }
     }
 }
 
 #[derive(Debug)]
-pub struct RootNode {
+struct InternalNode {
     cap: usize,
-    data: Option<Box<Node>>,
+    // Vec ではなく配列にしてもいいかも
+    nodes: Vec<NodePair>,
 }
-impl RootNode {
-    fn insert(&mut self, data: Record) -> Option<RefNode> {
-        // 末尾に常に入れるわけではない
-        if self.data.is_none() {
-            self.data = Some(Box::new(Node::Leaf(LeafNode::new(self.cap, data))));
-            return None;
-        }
-        let n = self.data.as_deref_mut().unwrap();
-        let inserted = n.insert(data);
-        if let Some(inserted) = inserted {
-            // 子はfullになって分割したので、自身の保持しているnodeには追加済みなので、
-            let n = self.data.take().unwrap();
-            let new_child_data = vec![
-                Pair::new(
-                    n.min_key().unwrap(),
-                    *n, // unwrap from box
-                ),
-                Pair {
-                    key: inserted.borrow().min_key().unwrap(),
-                    value: inserted.clone(), // unwrap from box
-                },
-            ];
-            let new_child = InternalNode {
-                cap: self.cap,
-                data: new_child_data,
-            };
-            self.data = Some(Box::new(Node::Internal(new_child)));
-        }
-        None
-    }
-}
-#[derive(Debug)]
-pub struct InternalNode {
-    cap: usize,
-    data: Vec<Pair>,
-}
+
 impl InternalNode {
-    fn insert(&mut self, data: Record) -> Option<RefNode> {
-        if self.data.is_empty() {
-            self.data.push(Pair::new(
-                data.key,
+    fn insert(&mut self, key: Key, data_id: usize) -> Option<Node> {
+        // TODO 同値のkeyが存在している場合がおかしいので、要修正
+        if self.nodes.is_empty() {
+            self.nodes.push(Pair::new(
+                key,
                 Node::Leaf(LeafNode {
                     cap: self.cap,
-                    data: Vec::new(),
-                    next: None,
+                    data_ids: vec![Pair::new(key, data_id)],
                 }),
-            ))
+            ));
+            return None;
         }
-        let splited = self.find_node(&data).value.borrow_mut().insert(data);
+        let node = self.find_node_for_insert(key, data_id);
+        let splited = node.value.insert(key, data_id);
         if let Some(n) = splited {
-            if let Some(k) = n.borrow().min_key() {
-                self.data.push(Pair {
-                    key: k,
-                    value: n.clone(),
-                });
-                self.data.sort_by_key(|p| p.key);
+            if let Some(k) = n.min_key() {
+                self.nodes.push(Pair { key: k, value: n });
+                self.nodes.sort_by_key(|p| p.key);
             }
         }
         if self.is_full() {
@@ -122,287 +159,123 @@ impl InternalNode {
         None
     }
 
-    fn split(&mut self) -> RefNode {
-        let right = self.data.split_off(self.data.len() / 2);
+    fn split(&mut self) -> Node {
+        let right = self.nodes.split_off(self.nodes.len() / 2);
         let new_next = Self {
             cap: self.cap,
-            data: right,
+            nodes: right,
         };
-        Rc::new(RefCell::new(Node::Internal(new_next)))
+        Node::Internal(new_next)
     }
 
-    fn find_node<'a>(&'a mut self, data: &Record) -> &'a Pair {
-        if self.data.is_empty() {
-            self.data.push(Pair::new(
-                data.key,
+    fn find_node_for_insert(&mut self, key: Key, data_id: usize) -> &mut NodePair {
+        if self.nodes.is_empty() {
+            self.nodes.push(NodePair::new(
+                key,
                 Node::Leaf(LeafNode {
                     cap: self.cap,
-                    data: Vec::new(),
-                    next: None,
+                    data_ids: vec![DataPair::new(key, data_id)],
                 }),
             ))
         }
-        let x = self
-            .data
-            .iter()
-            .take_while(|pair| pair.key < data.key)
-            .last();
-        if let Some(x) = x {
-            x
+        return self.find_mut_node(key).unwrap();
+    }
+
+    fn find_mut_node(&mut self, key: Key) -> Option<&mut NodePair> {
+        let exist = self.nodes.iter().any(|pair| pair.key < key);
+        if exist {
+            self.nodes
+                .iter_mut()
+                .take_while(|pair| pair.key < key)
+                .last()
         } else {
-            self.data.first().unwrap()
+            self.nodes.first_mut()
         }
+    }
+
+    pub fn search(&self, key: Key) -> Option<usize> {
+        // TODO 同値のkeyが存在している場合がおかしいので、要修正
+        let p = self.find_node(key);
+        p.and_then(|p| p.value.search(key))
+    }
+
+    fn find_node(&self, key: Key) -> Option<&NodePair> {
+        self.nodes
+            .iter()
+            .take_while(|pair| pair.key < key)
+            .last()
+            .or_else(|| self.nodes.first())
     }
 
     // capacityに空きがあるかどうか
     fn is_full(&self) -> bool {
         // 暗黙的に最小値のキー分保持している
         // その分がcapを圧迫しちゃうので、そのサイズ分無視するために１加算
-        self.data.len() > (self.cap + 1)
+        self.nodes.len() > (self.cap + 1)
     }
 }
+
 #[derive(Debug)]
-pub struct LeafNode {
+struct LeafNode {
     cap: usize,
-    data: Vec<Record>,
-    next: Option<Weak<RefCell<Node>>>,
+    // Vec ではなく配列にしてもいいかも
+    data_ids: Vec<DataPair>,
 }
 
 impl LeafNode {
-    fn new(cap: usize, data: Record) -> Self {
-        LeafNode {
-            cap,
-            data: vec![data],
-            next: None,
-        }
-    }
-    fn insert(&mut self, data: Record) -> Option<RefNode> {
+    fn insert(&mut self, key: Key, data_id: usize) -> Option<Node> {
         // 末尾に常に入れるわけではない
-        self.data.push(data);
-        self.data.sort_by_key(|r| r.key);
+        self.data_ids.push(DataPair::new(key, data_id));
+        self.data_ids.sort_by_key(|r| r.key);
         if self.is_full() {
             return Some(self.split());
         }
         None
     }
 
-    fn split(&mut self) -> RefNode {
-        let right = self.data.split_off(self.data.len() / 2);
-        let next = self.next.take();
+    fn split(&mut self) -> Node {
+        let right = self.data_ids.split_off(self.data_ids.len() / 2);
         let new_next = Self {
             cap: self.cap,
-            data: right,
-            next,
+            data_ids: right,
         };
-        let ref_node = Rc::new(RefCell::new(Node::Leaf(new_next)));
-        self.next = Some(Rc::downgrade(&ref_node));
-        ref_node
+        Node::Leaf(new_next)
     }
+
+    pub fn search(&self, key: Key) -> Option<usize> {
+        self.data_ids.iter().find(|p| p.key == key).map(|p| p.value)
+    }
+
     // capacityに空きがあるかどうか
     fn is_full(&self) -> bool {
-        self.data.len() > self.cap
+        self.data_ids.len() > self.cap
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::fmt;
-
     use super::*;
-
-    impl fmt::Pointer for Node {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            // use `as` to convert to a `*const T`, which implements Pointer, which we can use
-
-            let ptr = self as *const Self;
-            fmt::Pointer::fmt(&ptr, f)
-        }
-    }
-
-    fn extract_root(node: &Node) -> Option<&RootNode> {
-        match node {
-            Node::Root(root) => Some(root),
-            _ => None,
-        }
-    }
-    fn extract_internal(node: &Node) -> Option<&InternalNode> {
-        match node {
-            Node::Internal(internal) => Some(internal),
-            _ => None,
-        }
-    }
-    fn extract_leaf(node: &Node) -> Option<&LeafNode> {
-        match node {
-            Node::Leaf(leaf) => Some(leaf),
-            _ => None,
-        }
-    }
 
     #[test]
     fn insert() {
+        // {
+        //     let mut b = BPlusTree::<i64>::new(3);
+        //     b.insert(1, Data::new(0, -1));
+        //     let r = b.search(1);
+        //     assert!(r.is_some());
+        //     assert_eq!(*r.unwrap(), -1)
+        // }
         {
-            let mut n = Node::new(3);
-            {
-                let root = extract_root(&n).unwrap();
-                assert!(root.data.is_none());
-            }
-            let _ = n.insert(Record { key: 9, value: 11 });
-            {
-                let root = extract_root(&n).unwrap();
-                assert!(root.data.is_some());
-                let leaf = extract_leaf(root.data.as_deref().unwrap()).unwrap();
-                assert_eq!(leaf.data.len(), 1);
-                assert_eq!(leaf.data.first().unwrap(), &Record { key: 9, value: 11 });
-            }
-            let _ = n.insert(Record { key: 8, value: 11 });
-            let _ = n.insert(Record { key: 7, value: 11 });
-            {
-                let root = extract_root(&n).unwrap();
-                assert!(root.data.is_some());
-                let leaf = extract_leaf(root.data.as_deref().unwrap()).unwrap();
-                assert_eq!(leaf.data.len(), 3);
-            }
-            let _ = n.insert(Record { key: 10, value: 11 });
-            {
-                let root = extract_root(&n).unwrap();
-                let leaf = extract_internal(root.data.as_deref().unwrap()).unwrap();
-                assert_eq!(leaf.data.len(), 2);
-            }
-            let _ = n.insert(Record { key: 11, value: 11 });
-
-            let root = extract_root(&n).unwrap();
-            let internal = extract_internal(root.data.as_deref().unwrap()).unwrap();
-            assert_eq!(internal.data.len(), 2);
-            {
-                let x = internal.data.get(0).unwrap();
-                let x = x.value.as_ref().borrow();
-                let leaf = extract_leaf(&x).unwrap();
-                assert_eq!(
-                    leaf.data,
-                    vec![Record { key: 7, value: 11 }, Record { key: 8, value: 11 },]
-                );
-                let next = leaf.next.as_ref();
-                assert!(next.is_some());
-                let x = next.unwrap().upgrade().unwrap();
-                let x = x.borrow();
-
-                let leaf = extract_leaf(&x).unwrap();
-                // 分割後に追加された値が入っている
-                assert_eq!(
-                    leaf.data,
-                    vec![
-                        Record { key: 9, value: 11 },
-                        Record { key: 10, value: 11 },
-                        Record { key: 11, value: 11 }
-                    ]
-                );
-            }
-            {
-                let x = internal.data.get(1).unwrap();
-                assert_eq!(x.key, 9);
-                let x = x.value.as_ref().borrow();
-                let leaf = extract_leaf(&x).unwrap();
-                assert_eq!(
-                    leaf.data,
-                    vec![
-                        Record { key: 9, value: 11 },
-                        Record { key: 10, value: 11 },
-                        Record { key: 11, value: 11 }
-                    ]
-                );
-            }
+            let mut b = BPlusTree::<i64>::new(3);
+            b.insert(1, Data::new(0, -1));
+            b.insert(5, Data::new(0, -5));
+            b.insert(2, Data::new(0, -2));
+            b.insert(4, Data::new(0, -4));
+            b.insert(3, Data::new(0, -3));
+            // dbg!(b);
+            let r = b.search(5);
+            assert!(r.is_some());
+            assert_eq!(*r.unwrap(), -5)
         }
-        {
-            let mut n = Node::new(2);
-            let _ = n.insert(Record { key: 9, value: 11 });
-            let _ = n.insert(Record { key: 8, value: 11 });
-            let _ = n.insert(Record { key: 7, value: 11 });
-            let _ = n.insert(Record { key: 10, value: 11 });
-            let _ = n.insert(Record { key: 11, value: 11 });
-
-            let root = extract_root(&n).unwrap();
-            let internal = extract_internal(root.data.as_deref().unwrap()).unwrap();
-            assert_eq!(internal.data.len(), 2);
-            {
-                let p = internal.data.get(0).unwrap();
-                let x = p.value.as_ref().borrow();
-                let internal = extract_internal(&x).unwrap();
-                {
-                    let p = internal.data.get(0).unwrap();
-                    let x = p.value.as_ref().borrow();
-                    let leaf = extract_leaf(&x).unwrap();
-                    assert_eq!(leaf.data, vec![Record { key: 7, value: 11 }]);
-
-                    let next = leaf.next.as_ref();
-                    let x = next.unwrap().upgrade().unwrap();
-                    let x = x.borrow();
-                    let next_leaf = extract_leaf(&x).unwrap();
-                    // 分割後に追加された値が入っている
-                    assert_eq!(next_leaf.data, vec![Record { key: 8, value: 11 }]);
-                }
-                {
-                    let p = internal.data.get(1).unwrap();
-                    let x = p.value.as_ref().borrow();
-                    let leaf = extract_leaf(&x).unwrap();
-                    assert_eq!(leaf.data, vec![Record { key: 8, value: 11 }]);
-
-                    let next = leaf.next.as_ref();
-                    let x = next.unwrap().upgrade().unwrap();
-                    let x = x.borrow();
-                    let next_leaf = extract_leaf(&x).unwrap();
-                    // 分割後に追加された値が入っている
-                    assert_eq!(next_leaf.data, vec![Record { key: 9, value: 11 }]);
-                }
-            }
-            {
-                let p = internal.data.get(1).unwrap();
-                let x = p.value.as_ref().borrow();
-                let internal = extract_internal(&x).unwrap();
-                {
-                    let p = internal.data.get(0).unwrap();
-                    let x = p.value.as_ref().borrow();
-                    let leaf = extract_leaf(&x).unwrap();
-                    assert_eq!(leaf.data, vec![Record { key: 9, value: 11 }]);
-
-                    let next = leaf.next.as_ref();
-                    let x = next.unwrap().upgrade().unwrap();
-                    let x = x.borrow();
-                    let next_leaf = extract_leaf(&x).unwrap();
-                    // 分割後に追加された値が入っている
-                    assert_eq!(
-                        next_leaf.data,
-                        vec![Record { key: 10, value: 11 }, Record { key: 11, value: 11 }]
-                    );
-                }
-                {
-                    let p = internal.data.get(1).unwrap();
-                    let x = p.value.as_ref().borrow();
-                    let leaf = extract_leaf(&x).unwrap();
-                    assert_eq!(
-                        leaf.data,
-                        vec![Record { key: 10, value: 11 }, Record { key: 11, value: 11 }]
-                    );
-
-                    let next = leaf.next.as_ref();
-                    assert!(next.is_none());
-                }
-            }
-        }
-        // assert_eq!(leaf.data.first().unwrap(), &Record { key: 9, value: 11 });
-        // println!("{:?}", n)
-    }
-
-    #[test]
-    fn a() {
-        let v = gen();
-        println!("     :{:p}", v);
-    }
-    fn gen() -> Node {
-        let v = Node::Internal(InternalNode {
-            cap: 0,
-            data: Vec::new(),
-        });
-        println!("gem():{:p}", v);
-        v
     }
 }
